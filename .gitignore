@@ -1,0 +1,5 @@
+*.dSYM
+*.profraw
+*.s
+/main
+/main2
