@@ -1,64 +1,72 @@
 // Copyright © 2025 by Scott J Maddox. All rights reserved.
 // https://github.com/scottjmaddox/single-pass-compiler
 
-#define size_t unsigned long
-#define ssize_t long
+typedef unsigned long size_t; // stddef.h
+typedef long ssize_t;         // sys/types.h
 
-extern int open(char *path, int oflag, ...); // fcntl.h
-extern int close(int fildes); // unistd.h
-extern ssize_t read(int fildes, void *buf, size_t nbyte); // unistd.h
-extern ssize_t write(int fildes, void *buf, size_t nbyte); // unistd.h
-extern void perror(char *s); // stdio.h
-extern void exit(int status); // stdlib.h
-extern void *malloc(size_t size); // stdlib.h
-extern void *realloc(void *ptr, size_t size); // stdlib.h
-extern void free(void *ptr); // stdlib.h
+extern int open(char *path, int oflag, ...);                  // fcntl.h
+extern int close(int fildes);                                 // unistd.h
+extern ssize_t read(int fildes, void *buf, size_t nbyte);     // unistd.h
+extern ssize_t write(int fildes, void *buf, size_t nbyte);    // unistd.h
+extern void perror(char *s);                                  // stdio.h
+extern void exit(int status);                                 // stdlib.h
+extern void *malloc(size_t size);                             // stdlib.h
+extern void *realloc(void *ptr, size_t size);                 // stdlib.h
+extern void free(void *ptr);                                  // stdlib.h
 extern int strncmp(const char *s1, const char *s2, size_t n); // string.h
-extern char *strndup(const char *s1, size_t n); // string.h
-extern size_t strlen(const char *s); // string.h
+extern char *strndup(const char *s1, size_t n);               // string.h
+extern size_t strlen(const char *s);                          // string.h
 
-#define stdout          1
-#define stderr          2
-#define O_RDONLY        0x0000          /* open for reading only */
+#define	STDOUT_FILENO	1	    // unistd.h
+#define	STDERR_FILENO	2	    // unistd.h
+#define O_RDONLY        0x0000	// fcntl.h
 
 // ----------------------------------------------------------------------------
 // Diagnostic Utilities
 // ----------------------------------------------------------------------------
 
-char *inpath;
+void eprint(char *s) {
+    write(STDERR_FILENO, s, strlen(s));
+}
+
+void panic(char *s) {
+    eprint("panic: ");
+    eprint(s);
+    eprint("\n");
+    exit(1);
+}
 
 void eprint_int(int n) {
     char buf[32];
-    int i = 0;
-    if (n == 0) {
-        write(stderr, "0", 1);
-        return;
-    }
+    int i = sizeof(buf);
     if (n < 0) {
-        write(stderr, "-", 1);
-        n = -n;
+        while (n < 0) {
+            if (i <= 0) { panic("eprint_int: integer too large"); }
+            buf[--i] = '0' - (n % 10);
+            n /= 10;
+        }
+        if (i <= 0) { panic("eprint_int: integer too large"); }
+        buf[--i] = '-';
+    } else {
+        while (n > 0) {
+            if (i <= 0) { panic("eprint_int: integer too large"); }
+            buf[--i] = '0' + (n % 10);
+            n /= 10;
+        }
     }
-    while (n > 0) {
-        buf[i++] = '0' + (n % 10);
-        n /= 10;
-    }
-    for (int j = i - 1; j >= 0; j--) {
-        write(stderr, &buf[j], 1);
-    }
+    write(STDERR_FILENO, &buf[i], sizeof(buf) - i);
 }
 
-void eprint_str(char *s) {
-    write(stderr, s, strlen(s));
-}
+char *inpath;
 
 void eprint_loc(int col, int line) {
-    eprint_str("\n at ");
-    write(stderr, inpath, sizeof(inpath) - 1);
-    write(stderr, ":", 1);
+    eprint("\n at ");
+    write(STDERR_FILENO, inpath, sizeof(inpath) - 1);
+    write(STDERR_FILENO, ":", 1);
     eprint_int(line);
-    write(stderr, ":", 1);
+    write(STDERR_FILENO, ":", 1);
     eprint_int(col);
-    eprint_str("\n");
+    eprint("\n");
 }
 
 // ----------------------------------------------------------------------------
@@ -75,14 +83,8 @@ char *outbuf;
 int outlen = 0;
 
 void inshift(int n) {
-    if (n > inlen) {
-        write(stderr, "inshift: n > inlen\n", sizeof("inshift: n > inlen\n") - 1);
-        exit(1);
-    }
-    if (n > inidx) {
-        write(stderr, "inshift: n > inidx\n", sizeof("inshift: n > inidx\n") - 1);
-        exit(1);
-    }
+    if (n > inlen) { panic("inshift: n > inlen"); }
+    if (n > inidx) { panic("inshift: n > inidx"); }
     for (int i = 0; i < inlen - n; i++) {
         inbuf[i] = inbuf[i + n];
     }
@@ -97,10 +99,7 @@ void infill(void) {
     int read_bytes = 0;
     while (inlen < BUFSIZE) {
         read_bytes = read(fdin, buf, BUFSIZE - inlen);
-        if (read_bytes == -1) {
-            perror("fdin read");
-            exit(1);
-        }
+        if (read_bytes == -1) { perror("fdin read"); exit(1); }
         if (read_bytes == 0) {
             break; // EOF
         }
@@ -127,10 +126,7 @@ void outflush(void) {
     int written = 0;
     while (remaining > 0) {
         written = write(fdout, buf, remaining);
-        if (written == -1) {
-            perror("fdout write");
-            exit(1);
-        }
+        if (written == -1) { perror("fdout write"); exit(1); }
         buf += written;
         remaining -= written;
     }
@@ -265,7 +261,7 @@ void eat_cols(int n) {
 
 void eat_line_comment(void) {
     if (peak_char(0) != '/' || peak_char(1) != '/') {
-        eprint_str("eat_line_comment error");
+        eprint("eat_line_comment error");
         eprint_loc(src_col, src_line);
         exit(1);
     }
@@ -287,7 +283,7 @@ void eat_block_comment(void) {
     int col = src_col;
     int line = src_line;
     if (peak_char(0) != '/' || peak_char(1) != '*') {
-        eprint_str("eat_block_comment error");
+        eprint("eat_block_comment error");
         eprint_loc(src_col, src_line);
         exit(1);
     }
@@ -306,7 +302,7 @@ void eat_block_comment(void) {
             src_col = 1;
         }
     }
-    eprint_str("unterminated block comment");
+    eprint("unterminated block comment");
     eprint_loc(col, line);
     exit(1);
 }
@@ -469,8 +465,8 @@ void lex(void) {
         }
         break;
     default:
-        eprint_str("lex: unrecognized character: ");
-        write(stderr, &c, 1);
+        eprint("lex: unrecognized character: ");
+        write(STDERR_FILENO, &c, 1);
         eprint_loc(src_col, src_line);
         exit(1);
     }
@@ -485,40 +481,31 @@ void compile(void) {
         lex();
         if (token == TOKEN_EOF) break;
         char *str = TOKEN_DISPLAY[token];
-        write(stdout, str, strlen(str));
-        write(stdout, "\n", 1);
+        // TODO: use buffered output functions
+        write(fdout, str, strlen(str));
+        write(fdout, "\n", 1);
     }
+    outflush();
 }
 
 // ----------------------------------------------------------------------------
 
 int main(int argc, char **argv) {
     if (argc != 2) {
-        write(stderr, "usage: cc FILE\n", sizeof("usage: cc FILE\n") - 1);
+        write(STDERR_FILENO, "usage: cc FILE\n", sizeof("usage: cc FILE\n") - 1);
         exit(1);
     }
     inpath = argv[1];
     fdin = open(inpath, O_RDONLY);
-    if (fdin == -1) {
-        perror("fdin open");
-        exit(1);
-    }
+    if (fdin == -1) { perror("fdin open"); exit(1); }
     inbuf = malloc(BUFSIZE);
-    if (!inbuf) {
-        perror("inbuf malloc");
-        exit(1);
-    }
-    fdout = stdout;
+    if (!inbuf) { perror("inbuf malloc"); exit(1); }
+    fdout = STDOUT_FILENO;
     outbuf = malloc(BUFSIZE);
-    if (!outbuf) {
-        perror("outbuf malloc");
-        exit(1);
-    }
+    if (!outbuf) { perror("outbuf malloc"); exit(1); }
     compile();
-    outflush();
-    // Cleanup handled by OS on exit:
-    // free(outbuf);
-    // free(inbuf);
-    // close(fdin);
+    free(outbuf);
+    free(inbuf);
+    close(fdin);
     return 0;
 }
